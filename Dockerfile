@@ -28,5 +28,7 @@ COPY templates/ templates/
 EXPOSE 8080
 
 # Run with gunicorn (production WSGI server)
-# 2 workers = balanced for 512MB RAM, 300s timeout for large OCR jobs
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "300", "--log-level", "info", "app:app"]
+# 1 worker + preload = memory efficient for EasyOCR (~500MB models)
+# 300s timeout for large OCR jobs
+# Uses $PORT env var (Render sets this to 10000), falls back to 8080
+CMD exec gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 1 --preload --timeout 300 --log-level info app:app
