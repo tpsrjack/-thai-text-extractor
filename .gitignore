@@ -1,0 +1,36 @@
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Environment ──
+.env
+venv/
+.venv/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──
+*.log
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── OCR Test Outputs ──
+ocr_*.txt
+ocr_comparison/
+nul
+
+# ── Sample PDFs ──
+*.pdf
+รร.*
