@@ -1,12 +1,11 @@
-# ── Thai Text Extractor by KruJack ──
+# ── Thai Text Extractor by KruJack (Clipboard-only) ──
 # Docker image for Render deployment
 FROM python:3.12-slim
 
-# Install system dependencies for OCR + PDF processing
+# Install system dependencies for OCR only (no PDF/poppler needed)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-tha \
-    poppler-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,11 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY templates/ templates/
 
-# Expose port (Render sets PORT env var to 10000)
+# Expose port
 EXPOSE 8080
 
-# Run with gunicorn (production WSGI server)
-# 1 worker + preload = memory efficient for EasyOCR (~500MB models)
-# 300s timeout for large OCR jobs
+# Run with gunicorn (single worker for memory efficiency)
 # Uses $PORT env var (Render sets this to 10000), falls back to 8080
-CMD exec gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 1 --preload --timeout 300 --log-level info app:app
+CMD exec gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 1 --timeout 120 --log-level info app:app
