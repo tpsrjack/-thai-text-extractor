@@ -9,6 +9,7 @@ import unicodedata
 import tempfile
 import uuid
 import base64
+import gc
 from io import BytesIO
 from flask import Flask, render_template, request, jsonify, send_file
 
@@ -341,7 +342,7 @@ def enhance_image_for_ocr(img):
 
 def extract_text_ocr(pdf_path: str, lang: str = "tha+eng") -> dict:
     """Extract text from PDF using Tesseract OCR (for scanned/image-based PDFs)."""
-    from pdf2image import convert_from_path
+    from pdf2image import convert_from_path, pdfinfo_from_path
     import pytesseract
 
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
@@ -351,20 +352,35 @@ def extract_text_ocr(pdf_path: str, lang: str = "tha+eng") -> dict:
     # --oem 3: Default LSTM engine (combined with Legacy)
     custom_config = r'--psm 6 --oem 3'
 
-    # Higher DPI (400) for better accuracy on small Thai text
-    images = convert_from_path(pdf_path, dpi=400, fmt="png")
-    pages = []
+    # Reduced DPI (300) to avoid OOM on multi-page PDFs
+    # Process pages ONE AT A TIME to minimize peak memory usage
+    info = pdfinfo_from_path(pdf_path)
+    total_pages = info['Pages']
 
-    for i, img in enumerate(images):
+    pages = []
+    for i in range(1, total_pages + 1):
+        # Convert one page at a time — saves ~50-100MB per page vs loading all at once
+        page_images = convert_from_path(pdf_path, dpi=300, fmt="png",
+                                         first_page=i, last_page=i)
+        if not page_images:
+            continue
+        img = page_images[0]
+
         # Enhance image for better OCR
         img = enhance_image_for_ocr(img)
         text = pytesseract.image_to_string(img, lang=lang, config=custom_config)
         pages.append({
-            "number": i + 1,
+            "number": i,
             "text": text,
             "char_count": len(text.strip())
         })
 
+        # Explicit cleanup – free the PIL image and force GC periodically
+        del img
+        if i % 3 == 0:
+            gc.collect()
+
+    gc.collect()
     return pages
 
 
@@ -373,18 +389,32 @@ def extract_text_easyocr(pdf_path: str) -> dict:
     Slower than Tesseract but significantly more accurate for Thai text.
     """
     import numpy as np
-    from pdf2image import convert_from_path
+    from pdf2image import convert_from_path, pdfinfo_from_path
 
     # Get the lazy-loaded singleton Reader (models loaded once)
     reader = _get_easyocr_reader()
 
-    images = convert_from_path(pdf_path, dpi=400, fmt="png")
-    pages = []
+    # Process pages ONE AT A TIME to minimise peak memory
+    info = pdfinfo_from_path(pdf_path)
+    total_pages = info['Pages']
 
-    for i, img in enumerate(images):
+    pages = []
+    for i in range(1, total_pages + 1):
+        # Convert one page at a time
+        page_images = convert_from_path(pdf_path, dpi=300, fmt="png",
+                                         first_page=i, last_page=i)
+        if not page_images:
+            continue
+        img = page_images[0]
+
         img_np = np.array(img)
+        # Free PIL image before the heavy OCR call
+        del img
+
         try:
             result = reader.readtext(img_np)
+            # Free numpy array after OCR is done
+            del img_np
             # Result is list of [bbox, text, confidence]
             page_texts = []
             for detection in result:
@@ -393,17 +423,28 @@ def extract_text_easyocr(pdf_path: str) -> dict:
                     page_texts.append(text.strip())
             page_output = "\n".join(page_texts)
             pages.append({
-                "number": i + 1,
+                "number": i,
                 "text": page_output,
                 "char_count": len(page_output.strip())
             })
         except Exception as e:
             pages.append({
-                "number": i + 1,
+                "number": i,
                 "text": f"[EasyOCR Error: {e}]",
                 "char_count": 0
             })
 
+        # Free numpy array even on error — prevents cumulative memory leak
+        try:
+            del img_np
+        except NameError:
+            pass
+
+        # Periodic garbage collection to keep memory in check
+        if i % 3 == 0:
+            gc.collect()
+
+    gc.collect()
     return pages
 
 
